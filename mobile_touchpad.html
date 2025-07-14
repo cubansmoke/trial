@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mobile Touchpad</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 15px;
+            text-align: center;
+            color: white;
+            backdrop-filter: blur(10px);
+        }
+
+        .status {
+            font-size: 14px;
+            margin-top: 5px;
+            opacity: 0.8;
+        }
+
+        .touchpad {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.1);
+            margin: 20px;
+            border-radius: 20px;
+            position: relative;
+            backdrop-filter: blur(20px);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            overflow: hidden;
+        }
+
+        .touchpad-area {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            cursor: none;
+        }
+
+        .gesture-feedback {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 18px;
+            pointer-events: none;
+            transition: all 0.3s ease;
+        }
+
+        .controls {
+            padding: 20px;
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 15px 25px;
+            border: none;
+            border-radius: 15px;
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            backdrop-filter: blur(10px);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-primary {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-secondary {
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        .btn:active {
+            transform: scale(0.95);
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .connection-panel {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 20px;
+            margin: 20px;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+            color: white;
+            text-align: center;
+        }
+
+        .connection-code {
+            font-size: 24px;
+            font-weight: bold;
+            margin: 10px 0;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            letter-spacing: 2px;
+        }
+
+        .ripple {
+            position: absolute;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+            pointer-events: none;
+            animation: ripple 0.6s ease-out;
+        }
+
+        @keyframes ripple {
+            0% {
+                transform: scale(0);
+                opacity: 1;
+            }
+            100% {
+                transform: scale(2);
+                opacity: 0;
+            }
+        }
+
+        .sensitivity-control {
+            margin: 10px;
+            text-align: center;
+            color: white;
+        }
+
+        .sensitivity-slider {
+            width: 200px;
+            margin: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📱 Mobile Touchpad</h1>
+        <div class="status" id="status">Ready to connect</div>
+    </div>
+
+    <div class="connection-panel" id="connectionPanel">
+        <div>Connect to your laptop:</div>
+        <input type="text" id="serverUrl" placeholder="ws://192.168.1.100:8765" 
+               style="padding: 10px; margin: 10px; border-radius: 5px; border: none; width: 80%;">
+        <div style="font-size: 12px; opacity: 0.8; margin-top: 10px;">
+            Enter WebSocket URL from desktop companion app
+        </div>
+    </div>
+
+    <div class="touchpad" id="touchpad">
+        <div class="touchpad-area" id="touchpadArea">
+            <div class="gesture-feedback" id="gestureFeedback">
+                Touch and drag to move cursor
+            </div>
+        </div>
+    </div>
+
+    <div class="sensitivity-control">
+        <label>Sensitivity: </label>
+        <input type="range" class="sensitivity-slider" id="sensitivity" min="0.5" max="3" step="0.1" value="1.5">
+        <span id="sensitivityValue">1.5x</span>
+    </div>
+
+    <div class="controls">
+        <button class="btn btn-primary" id="leftClick">Left Click</button>
+        <button class="btn btn-secondary" id="rightClick">Right Click</button>
+        <button class="btn btn-primary" id="scrollToggle">Scroll Mode</button>
+        <button class="btn btn-secondary" id="connect">Connect</button>
+    </div>
+
+    <script>
+        class MobileTouchpad {
+            constructor() {
+                this.isConnected = false;
+                this.isScrollMode = false;
+                this.sensitivity = 1.5;
+                this.lastTouch = null;
+                this.gestureTimeout = null;
+                this.websocket = null;
+                this.reconnectAttempts = 0;
+                this.maxReconnectAttempts = 5;
+                
+                this.initElements();
+                this.setupEventListeners();
+                this.generateConnectionCode();
+            }
+
+            initElements() {
+                this.touchpadArea = document.getElementById('touchpadArea');
+                this.gestureFeedback = document.getElementById('gestureFeedback');
+                this.status = document.getElementById('status');
+                this.connectionPanel = document.getElementById('connectionPanel');
+                this.serverUrl = document.getElementById('serverUrl');
+                this.leftClickBtn = document.getElementById('leftClick');
+                this.rightClickBtn = document.getElementById('rightClick');
+                this.scrollToggleBtn = document.getElementById('scrollToggle');
+                this.connectBtn = document.getElementById('connect');
+                this.sensitivitySlider = document.getElementById('sensitivity');
+                this.sensitivityValue = document.getElementById('sensitivityValue');
+            }
+
+            setupEventListeners() {
+                // Touch events for trackpad
+                this.touchpadArea.addEventListener('touchstart', (e) => this.handleTouchStart(e));
+                this.touchpadArea.addEventListener('touchmove', (e) => this.handleTouchMove(e));
+                this.touchpadArea.addEventListener('touchend', (e) => this.handleTouchEnd(e));
+
+                // Button events
+                this.leftClickBtn.addEventListener('click', () => this.sendClick('left'));
+                this.rightClickBtn.addEventListener('click', () => this.sendClick('right'));
+                this.scrollToggleBtn.addEventListener('click', () => this.toggleScrollMode());
+                this.connectBtn.addEventListener('click', () => this.toggleConnection());
+
+                // Sensitivity control
+                this.sensitivitySlider.addEventListener('input', (e) => {
+                    this.sensitivity = parseFloat(e.target.value);
+                    this.sensitivityValue.textContent = this.sensitivity + 'x';
+                });
+
+                // Prevent default touch behaviors
+                document.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
+                document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+            }
+
+            handleTouchStart(e) {
+                e.preventDefault();
+                const touch = e.touches[0];
+                this.lastTouch = { x: touch.clientX, y: touch.clientY };
+                
+                this.showGestureFeedback('Moving cursor...');
+                this.createRipple(touch.clientX, touch.clientY);
+            }
+
+            handleTouchMove(e) {
+                e.preventDefault();
+                if (!this.lastTouch) return;
+
+                const touch = e.touches[0];
+                const deltaX = (touch.clientX - this.lastTouch.x) * this.sensitivity;
+                const deltaY = (touch.clientY - this.lastTouch.y) * this.sensitivity;
+
+                if (this.isScrollMode) {
+                    this.sendScroll(deltaX, deltaY);
+                    this.showGestureFeedback('Scrolling...');
+                } else {
+                    this.sendMouseMove(deltaX, deltaY);
+                    this.showGestureFeedback('Moving cursor...');
+                }
+
+                this.lastTouch = { x: touch.clientX, y: touch.clientY };
+            }
+
+            handleTouchEnd(e) {
+                e.preventDefault();
+                this.lastTouch = null;
+                this.showGestureFeedback('Touch and drag to move cursor');
+            }
+
+            sendMouseMove(deltaX, deltaY) {
+                if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+                    this.websocket.send(JSON.stringify({
+                        type: 'mousemove',
+                        deltaX: deltaX,
+                        deltaY: deltaY
+                    }));
+                }
+            }
+
+            sendClick(button) {
+                if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+                    this.websocket.send(JSON.stringify({
+                        type: 'click',
+                        button: button
+                    }));
+                    this.showGestureFeedback(`${button} click`);
+                }
+            }
+
+            sendScroll(deltaX, deltaY) {
+                if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+                    this.websocket.send(JSON.stringify({
+                        type: 'scroll',
+                        deltaX: deltaX,
+                        deltaY: deltaY
+                    }));
+                }
+            }
+
+            toggleScrollMode() {
+                this.isScrollMode = !this.isScrollMode;
+                this.scrollToggleBtn.textContent = this.isScrollMode ? 'Exit Scroll' : 'Scroll Mode';
+                this.scrollToggleBtn.style.background = this.isScrollMode ? 'rgba(255, 100, 100, 0.3)' : 'rgba(255, 255, 255, 0.2)';
+                this.showGestureFeedback(this.isScrollMode ? 'Scroll mode active' : 'Cursor mode active');
+            }
+
+            toggleConnection() {
+                if (this.isConnected) {
+                    this.disconnect();
+                } else {
+                    this.connect();
+                }
+            }
+
+            connect() {
+                const url = this.serverUrl.value.trim();
+                if (!url) {
+                    alert('Please enter a WebSocket URL');
+                    return;
+                }
+
+                this.status.textContent = 'Connecting...';
+                this.connectBtn.textContent = 'Connecting...';
+                this.connectBtn.disabled = true;
+
+                try {
+                    this.websocket = new WebSocket(url);
+                    
+                    this.websocket.onopen = () => {
+                        this.isConnected = true;
+                        this.status.textContent = 'Connected';
+                        this.connectBtn.textContent = 'Disconnect';
+                        this.connectBtn.disabled = false;
+                        this.connectionPanel.style.display = 'none';
+                        this.showGestureFeedback('Connected! Ready to control laptop');
+                        this.reconnectAttempts = 0;
+                    };
+
+                    this.websocket.onclose = (event) => {
+                        this.isConnected = false;
+                        this.status.textContent = 'Disconnected';
+                        this.connectBtn.textContent = 'Connect';
+                        this.connectBtn.disabled = false;
+                        this.connectionPanel.style.display = 'block';
+                        this.showGestureFeedback('Disconnected');
+                        
+                        // Auto-reconnect if not intentionally disconnected
+                        if (!event.wasClean && this.reconnectAttempts < this.maxReconnectAttempts) {
+                            this.reconnectAttempts++;
+                            setTimeout(() => {
+                                if (!this.isConnected) {
+                                    this.connect();
+                                }
+                            }, 2000 * this.reconnectAttempts);
+                        }
+                    };
+
+                    this.websocket.onerror = (error) => {
+                        console.error('WebSocket error:', error);
+                        this.status.textContent = 'Connection Error';
+                        this.showGestureFeedback('Connection failed');
+                    };
+
+                } catch (error) {
+                    console.error('Connection error:', error);
+                    this.status.textContent = 'Connection Error';
+                    this.connectBtn.textContent = 'Connect';
+                    this.connectBtn.disabled = false;
+                    alert('Failed to connect. Please check the URL and try again.');
+                }
+            }
+
+            disconnect() {
+                if (this.websocket) {
+                    this.websocket.close();
+                    this.websocket = null;
+                }
+                this.isConnected = false;
+                this.status.textContent = 'Disconnected';
+                this.connectBtn.textContent = 'Connect';
+                this.connectionPanel.style.display = 'block';
+                this.showGestureFeedback('Disconnected');
+            }
+
+            generateConnectionCode() {
+                // Set default URL for local testing
+                const defaultUrl = `ws://${window.location.hostname}:8765`;
+                this.serverUrl.value = defaultUrl;
+            }
+
+            showGestureFeedback(message) {
+                this.gestureFeedback.textContent = message;
+                this.gestureFeedback.style.opacity = '1';
+                this.gestureFeedback.style.transform = 'translate(-50%, -50%) scale(1.1)';
+                
+                clearTimeout(this.gestureTimeout);
+                this.gestureTimeout = setTimeout(() => {
+                    this.gestureFeedback.style.opacity = '0.6';
+                    this.gestureFeedback.style.transform = 'translate(-50%, -50%) scale(1)';
+                }, 1000);
+            }
+
+            createRipple(x, y) {
+                const ripple = document.createElement('div');
+                ripple.className = 'ripple';
+                ripple.style.left = (x - 25) + 'px';
+                ripple.style.top = (y - 25) + 'px';
+                ripple.style.width = ripple.style.height = '50px';
+                
+                this.touchpadArea.appendChild(ripple);
+                setTimeout(() => ripple.remove(), 600);
+            }
+        }
+
+        // Initialize the touchpad when the page loads
+        window.addEventListener('load', () => {
+            new MobileTouchpad();
+        });
+    </script>
+</body>
+</html>
